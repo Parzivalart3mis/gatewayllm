@@ -24,11 +24,11 @@ import (
 // a nil value disables that concern, which is what keeps the build order's
 // early stages runnable before those layers exist.
 type Deps struct {
-	Config *config.Config
-	Router *router.Router
-	Exec   *resilience.Executor
-	Auth   Authenticator
-	Limit  Limiter
+	Config  *config.Config
+	Router  *router.Router
+	Exec    *resilience.Executor
+	Auth    Authenticator
+	Limit   Limiter
 	Cache   *cache.Cache
 	Meter   *meter.Meter
 	Metrics Metrics
