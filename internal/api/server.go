@@ -72,11 +72,15 @@ func (s *Server) routes() {
 }
 
 // Handler returns the root handler with global middleware applied.
+//
+// Order is outermost-last: request ID wraps everything, so both the access log
+// and any recovered panic can report the ID. Recovery sits inside the access
+// log so a panicking request is still logged with its 500.
 func (s *Server) Handler() http.Handler {
 	var h http.Handler = s.mux
 	h = s.withRecovery(h)
-	h = s.withRequestID(h)
 	h = s.withAccessLog(h)
+	h = s.withRequestID(h)
 	return h
 }
 
