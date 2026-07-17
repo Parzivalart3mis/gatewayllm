@@ -1,0 +1,220 @@
+# GatewayLLM configuration.
+#
+# Secrets are interpolated from the environment (${VAR} or ${VAR:-default}), so
+# this file is safe to commit. Copy .env.example to .env and put keys there.
+
+server:
+  addr: ":8080"
+  read_timeout: 30s
+  # Must exceed the longest expected completion: a short value truncates streams.
+  write_timeout: 10m
+  shutdown_timeout: 20s
+  max_body_bytes: 4194304  # 4 MiB
+
+# --- providers -------------------------------------------------------------
+# One entry per backend. `kind` selects the adapter; adding a backend means
+# adding one file implementing provider.Provider, then an entry here.
+
+providers:
+  - name: openai
+    kind: openai
+    api_key: ${OPENAI_API_KEY}
+    timeout: 60s
+    models:
+      - gpt-4o
+      - gpt-4o-mini
+      - text-embedding-3-small
+
+  - name: groq
+    kind: groq
+    api_key: ${GROQ_API_KEY}
+    # Groq is fast enough that a long timeout only masks a real problem.
+    timeout: 30s
+    models:
+      - llama-3.3-70b-versatile
+      - llama-3.1-8b-instant
+
+  - name: gemini
+    kind: gemini
+    api_key: ${GEMINI_API_KEY}
+    timeout: 60s
+    models:
+      - gemini-2.0-flash
+      - gemini-1.5-flash
+
+# --- router ----------------------------------------------------------------
+# Aliases are the model names clients send. Each maps to an ordered target list;
+# with the priority strategy, that order is the failover order.
+
+router:
+  aliases:
+    # Cheap and fast, with a cross-provider fallback: if Groq is down, the same
+    # request is served by Gemini rather than failing.
+    fast:
+      strategy: priority
+      targets:
+        - provider: groq
+          model: llama-3.1-8b-instant
+        - provider: gemini
+          model: gemini-2.0-flash
+        - provider: openai
+          model: gpt-4o-mini
+
+    # Highest quality first, degrading to cheaper models rather than erroring.
+    smart:
+      strategy: priority
+      targets:
+        - provider: openai
+          model: gpt-4o
+        - provider: gemini
+          model: gemini-2.0-flash
+        - provider: groq
+          model: llama-3.3-70b-versatile
+
+    # Splits traffic 80/20 to compare providers on live traffic. The unpicked
+    # target still serves as a fallback.
+    balanced:
+      strategy: weighted
+      targets:
+        - provider: groq
+          model: llama-3.3-70b-versatile
+          weight: 80
+        - provider: openai
+          model: gpt-4o-mini
+          weight: 20
+
+    embeddings:
+      strategy: priority
+      targets:
+        - provider: openai
+          model: text-embedding-3-small
+
+  # Unknown model names route here. Leave empty to reject them instead.
+  default_alias: fast
+
+# --- cache -----------------------------------------------------------------
+
+cache:
+  enabled: true
+  exact_ttl: 1h
+
+  # The single most important correctness knob. Above this temperature the
+  # caller is asking for variety, and serving a cached answer defeats the
+  # request even though it satisfies the API contract.
+  max_temperature: 0.3
+
+  semantic:
+    enabled: true
+    collection: gatewayllm_semantic
+
+    # Minimum cosine similarity for a hit. 0.95 is deliberately conservative:
+    # below ~0.90, paraphrases that mean different things start matching, and a
+    # false hit costs far more trust than a miss costs money. Tune with the
+    # gateway_cache_similarity histogram, which records accepted and rejected
+    # scores separately.
+    threshold: 0.95
+
+    ttl: 24h
+    # A cached entry may differ from the request's temperature by at most this.
+    max_temp_delta: 0.05
+    # Must match the embedder's output. all-MiniLM-L6-v2 emits 384.
+    vector_size: 384
+
+# --- embedder --------------------------------------------------------------
+# kind: sidecar (local Python, no per-token cost, nothing leaves the host)
+#       api     (hosted; no model to run, but a network hop and a bill per lookup)
+
+embed:
+  kind: ${EMBED_KIND:-sidecar}
+  base_url: ${EMBEDDER_URL:-http://localhost:8000}
+  model: ${EMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+  api_key: ${OPENAI_API_KEY:-}
+  timeout: 10s
+
+# To use the hosted embedder instead, set EMBED_KIND=api and:
+#   embed:
+#     kind: api
+#     base_url: https://api.openai.com/v1
+#     model: text-embedding-3-small
+#     api_key: ${OPENAI_API_KEY}
+#   cache.semantic.vector_size: 1536   # must match the model
+
+# --- resilience ------------------------------------------------------------
+
+resilience:
+  # Initial attempt plus retries, per provider, before failing over.
+  max_attempts: 3
+  base_backoff: 200ms
+  max_backoff: 5s
+
+  breaker:
+    enabled: true
+    # Consecutive failures that open the circuit. Only upstream faults count;
+    # client errors never trip it.
+    failure_threshold: 5
+    open_duration: 30s
+    half_open_probes: 2
+
+# --- rate limiting ---------------------------------------------------------
+
+rate_limit:
+  enabled: true
+  # Applies to keys with no per-key override in the api_keys table.
+  default_rpm: 60
+  burst: 60
+
+# --- stores ----------------------------------------------------------------
+
+stores:
+  redis_url: ${REDIS_URL:-redis://localhost:6379/0}
+  qdrant_url: ${QDRANT_URL:-http://localhost:6333}
+  postgres_url: ${POSTGRES_URL:-postgres://gateway:gateway@localhost:5432/gatewayllm?sslmode=disable}
+
+# --- metering --------------------------------------------------------------
+
+meter:
+  enabled: true
+  # Rows are dropped rather than blocking a request when the buffer fills.
+  buffer_size: 4096
+  flush_interval: 2s
+  batch_size: 128
+
+# --- observability ---------------------------------------------------------
+
+obs:
+  service_name: gatewayllm
+  # Empty disables tracing; spans then cost nothing.
+  otlp_endpoint: ${OTLP_ENDPOINT:-}
+  sample_ratio: 1.0
+  metrics_path: /metrics
+  log_level: ${LOG_LEVEL:-info}
+
+# --- pricing ---------------------------------------------------------------
+# USD per million tokens, used for the cost and cost-saved ledger. Keys are
+# "provider/model" or bare "model"; the qualified form wins, which is what lets
+# the same model be priced differently per provider.
+#
+# Verify against each provider's pricing page before trusting the numbers.
+
+pricing:
+  openai/gpt-4o:
+    input_per_million: 2.50
+    output_per_million: 10.00
+  openai/gpt-4o-mini:
+    input_per_million: 0.15
+    output_per_million: 0.60
+  openai/text-embedding-3-small:
+    input_per_million: 0.02
+    output_per_million: 0.00
+  groq/llama-3.3-70b-versatile:
+    input_per_million: 0.59
+    output_per_million: 0.79
+  groq/llama-3.1-8b-instant:
+    input_per_million: 0.05
+    output_per_million: 0.08
+  gemini/gemini-2.0-flash:
+    input_per_million: 0.10
+    output_per_million: 0.40
+  gemini/gemini-1.5-flash:
+    input_per_million: 0.075
+    output_per_million: 0.30

@@ -1,0 +1,15 @@
+# Load dashboards from disk so they are version-controlled rather than living
+# only in Grafana's database.
+apiVersion: 1
+
+providers:
+  - name: gatewayllm
+    orgId: 1
+    folder: GatewayLLM
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

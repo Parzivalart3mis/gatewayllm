@@ -288,16 +288,26 @@ func (rc *requestContext) storeAsync(target router.Target, upstreamModel, text s
 // --- metering ---
 
 func (rc *requestContext) meterSuccess(target router.Target, upstreamModel string, usage provider.Usage, status cache.Status) {
-	m := rc.server.deps.Meter
-	if m == nil {
-		return
-	}
 	providerName := ""
 	if target.Provider != nil {
 		providerName = target.Provider.Name()
 	}
-	cost, _ := rc.server.pricing().Cost(providerName, upstreamModel, usage.PromptTokens, usage.CompletionTokens)
+	cost, priced := rc.server.pricing().Cost(providerName, upstreamModel, usage.PromptTokens, usage.CompletionTokens)
+	if !priced && usage.TotalTokens > 0 {
+		// Without this the model silently books as free and the cost dashboard
+		// understates real spend.
+		rc.server.log.Warn("no price configured: this request is booked at zero cost",
+			"provider", providerName, "model", upstreamModel)
+	}
 
+	if mx := rc.server.deps.Metrics; mx != nil {
+		mx.RecordUsage(providerName, upstreamModel, usage.PromptTokens, usage.CompletionTokens, cost, 0, string(status))
+	}
+
+	m := rc.server.deps.Meter
+	if m == nil {
+		return
+	}
 	m.Record(meter.Record{
 		RequestID:        rc.reqID,
 		TenantID:         rc.tenant.ID,
@@ -319,12 +329,18 @@ func (rc *requestContext) meterSuccess(target router.Target, upstreamModel strin
 // meterCacheHit records a hit. Cost is zero and the money not spent is recorded
 // as savings, which is what makes the "cost saved" panel possible.
 func (rc *requestContext) meterCacheHit(res cache.Result, e *cache.Entry) {
+	saved, _ := rc.server.pricing().Cost(e.Provider, e.Model, e.PromptTokens, e.CompletionTokens)
+
+	if mx := rc.server.deps.Metrics; mx != nil {
+		// Cost is zero and the avoided spend is booked as savings: this is the
+		// pair of numbers the "cost saved" panel is built from.
+		mx.RecordUsage(e.Provider, e.Model, e.PromptTokens, e.CompletionTokens, 0, saved, string(res.Status))
+	}
+
 	m := rc.server.deps.Meter
 	if m == nil {
 		return
 	}
-	saved, _ := rc.server.pricing().Cost(e.Provider, e.Model, e.PromptTokens, e.CompletionTokens)
-
 	m.Record(meter.Record{
 		RequestID:        rc.reqID,
 		TenantID:         rc.tenant.ID,

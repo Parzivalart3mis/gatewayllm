@@ -1,0 +1,175 @@
+# Full GatewayLLM stack: gateway + embedder sidecar + the three backing stores +
+# tracing + metrics. Sized to run on one cheap VPS.
+#
+#   docker compose up -d
+#   curl localhost:8080/healthz
+#
+# The gateway is stateless: `docker compose up -d --scale gateway=3` behind a
+# load balancer works with no further changes, because the cache, rate-limit
+# buckets, and breaker state are all shared through Redis.
+
+name: gatewayllm
+
+services:
+  gateway:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # API
+      - "9091:9090"   # Prometheus metrics
+    volumes:
+      - ./config.yaml:/etc/gatewayllm/config.yaml:ro
+    environment:
+      # Provider keys come from .env; the config file interpolates them, so no
+      # secret is ever committed.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      POSTGRES_URL: postgres://gateway:gateway@postgres:5432/gatewayllm?sslmode=disable
+      EMBEDDER_URL: http://embedder:8000
+      OTLP_ENDPOINT: jaeger:4318
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      embedder:
+        # The gateway probes the embedder's dimensions at startup, so it must
+        # not start until the model has finished loading.
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  embedder:
+    build:
+      context: ./sidecar
+    restart: unless-stopped
+    # Not published: the embedder is an internal dependency of the gateway and
+    # has no authentication of its own.
+    expose:
+      - "8000"
+    environment:
+      EMBED_MODEL: sentence-transformers/all-MiniLM-L6-v2
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+      interval: 15s
+      timeout: 5s
+      # Generous: the model loads into memory before the first probe can pass.
+      start_period: 90s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # --- backing stores ---
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    expose:
+      - "6379"
+    # allkeys-lru with a hard cap: the exact tier is a cache, so under memory
+    # pressure Redis must evict entries rather than start rejecting writes.
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    restart: unless-stopped
+    expose:
+      - "6333"
+    ports:
+      - "6333:6333"   # dashboard at http://localhost:6333/dashboard
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__LOG_LEVEL: WARN
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    expose:
+      - "5432"
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
+      POSTGRES_DB: gatewayllm
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gatewayllm"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # --- observability ---
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    restart: unless-stopped
+    ports:
+      - "16686:16686"  # UI: the per-request trace waterfall
+    expose:
+      - "4318"         # OTLP/HTTP receiver
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      # Anonymous viewing: this is a local demo stack, and the login wall is
+      # friction when the point is to show the dashboard.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    depends_on:
+      - prometheus
+
+volumes:
+  qdrant_data:
+  postgres_data:
+  prometheus_data:
+  grafana_data:

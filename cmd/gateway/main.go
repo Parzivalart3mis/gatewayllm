@@ -274,14 +274,15 @@ func build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*applicat
 	}
 
 	app.server = api.NewServer(api.Deps{
-		Config: cfg,
-		Router: rt,
-		Exec:   exec,
-		Auth:   auth,
-		Limit:  limiter,
-		Cache:  c,
-		Meter:  m,
-		Logger: log,
+		Config:  cfg,
+		Router:  rt,
+		Exec:    exec,
+		Auth:    auth,
+		Limit:   limiter,
+		Cache:   c,
+		Meter:   m,
+		Metrics: metrics,
+		Logger:  log,
 	})
 	return app, nil
 }

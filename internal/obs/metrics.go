@@ -4,6 +4,7 @@
 package obs
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -175,3 +176,30 @@ func boolLabel(b bool) string {
 }
 
 var _ cache.Metrics = (*Metrics)(nil)
+
+// --- api.Metrics implementation ---
+
+// RecordRequest implements api.Metrics.
+func (m *Metrics) RecordRequest(path string, status int, cacheStatus string, dur time.Duration) {
+	code := strconv.Itoa(status)
+	m.RequestsTotal.WithLabelValues(path, code, cacheStatus).Inc()
+	m.RequestDuration.WithLabelValues(path, cacheStatus).Observe(dur.Seconds())
+}
+
+// RecordUsage implements api.Metrics.
+func (m *Metrics) RecordUsage(providerName, model string, promptTokens, completionTokens int, costUSD, savedUSD float64, cacheStatus string) {
+	if providerName == "" {
+		providerName = "none" // a hit or a pre-routing failure reached no provider
+	}
+	m.TokensTotal.WithLabelValues(providerName, model, "prompt").Add(float64(promptTokens))
+	m.TokensTotal.WithLabelValues(providerName, model, "completion").Add(float64(completionTokens))
+
+	if costUSD > 0 {
+		m.CostUSDTotal.WithLabelValues(providerName, model).Add(costUSD)
+	}
+	// Attribute savings to the tier that produced them, so the dashboard can
+	// show what the semantic tier earns over the exact tier alone.
+	if savedUSD > 0 {
+		m.SavedUSDTotal.WithLabelValues(model, cacheStatus).Add(savedUSD)
+	}
+}

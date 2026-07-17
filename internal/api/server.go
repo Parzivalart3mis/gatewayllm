@@ -29,9 +29,10 @@ type Deps struct {
 	Exec   *resilience.Executor
 	Auth   Authenticator
 	Limit  Limiter
-	Cache  *cache.Cache
-	Meter  *meter.Meter
-	Logger *slog.Logger
+	Cache   *cache.Cache
+	Meter   *meter.Meter
+	Metrics Metrics
+	Logger  *slog.Logger
 }
 
 // Server serves the OpenAI-compatible API.

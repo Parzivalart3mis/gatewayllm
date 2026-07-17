@@ -1,0 +1,496 @@
+{
+  "uid": "gatewayllm-overview",
+  "title": "GatewayLLM — Overview",
+  "tags": ["gatewayllm", "llm", "cache"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "editable": true,
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "provider",
+        "label": "Provider",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(gateway_provider_attempts_total, provider)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" },
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Headline",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Cache hit rate",
+      "description": "Share of cacheable requests served without calling a provider. Bypassed requests (high temperature, explicit no-cache) are excluded: they were never eligible, and counting them would understate the cache's real performance. Read this next to the false-hit panel — a high hit rate only means something if wrong hits stay at zero.",
+      "gridPos": { "h": 5, "w": 5, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(gateway_cache_lookups_total{status=~\"exact_hit|semantic_hit\"}[$__rate_interval])) / clamp_min(sum(rate(gateway_cache_lookups_total{status=~\"exact_hit|semantic_hit|miss\"}[$__rate_interval])), 0.0001)",
+          "legendFormat": "hit rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "fixed", "fixedColor": "#3987e5" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Cost saved",
+      "description": "Cumulative USD not spent because a request was served from cache, priced at what the original call cost. This is the number the project exists to produce.",
+      "gridPos": { "h": 5, "w": 5, "x": 5, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(gateway_saved_usd_total)",
+          "legendFormat": "saved"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4,
+          "color": { "mode": "fixed", "fixedColor": "#008300" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "False hits",
+      "description": "Cache hits reported as semantically wrong. This is the honest counterpart to hit rate: a cache that answers questions nobody asked is worse than no cache. Anything above zero means the similarity threshold is too low.",
+      "gridPos": { "h": 5, "w": 5, "x": 10, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum(gateway_cache_false_hits_total)", "legendFormat": "false hits" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#008300", "value": null },
+              { "color": "#eb6834", "value": 1 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "p95 latency",
+      "description": "End-to-end p95 across all requests, cached and uncached together.",
+      "gridPos": { "h": 5, "w": 4, "x": 15, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(gateway_request_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "color": { "mode": "fixed", "fixedColor": "#4a3aa7" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Requests/sec",
+      "gridPos": { "h": 5, "w": 5, "x": 19, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(gateway_requests_total{path=~\".*chat/completions.*\"}[$__rate_interval]))",
+          "legendFormat": "rps"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "color": { "mode": "fixed", "fixedColor": "#1baf7a" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+
+    {
+      "type": "row",
+      "title": "Cache",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "collapsed": false
+    },
+
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Cache outcomes",
+      "description": "Lookup outcomes over time. Exact hits cost one Redis round trip; semantic hits additionally cost an embedding call; misses go to a provider.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate(gateway_cache_lookups_total[$__rate_interval]))",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "pointSize": 8,
+            "spanNulls": false,
+            "axisGridShow": true,
+            "lineInterpolation": "smooth"
+          },
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "exact_hit" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "semantic_hit" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#1baf7a" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "miss" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#c98500" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "bypass" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#8b8a83" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "error" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#eb6834" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Semantic similarity — accepted vs rejected",
+      "description": "Median similarity of candidates the semantic tier accepted versus those it rejected on the parameter-compatibility guard. The gap between these lines is how the threshold gets tuned with evidence instead of guesswork: if rejected scores creep toward accepted ones, the threshold is too close to the noise floor.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(gateway_cache_similarity_bucket{accepted=\"true\"}[$__rate_interval])))",
+          "legendFormat": "accepted (median)"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(gateway_cache_similarity_bucket{accepted=\"false\"}[$__rate_interval])))",
+          "legendFormat": "rejected (median)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 3,
+          "min": 0.5,
+          "max": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "auto",
+            "pointSize": 8,
+            "spanNulls": true,
+            "lineInterpolation": "smooth"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "accepted (median)" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#008300" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "rejected (median)" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#d55181" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+
+    {
+      "type": "row",
+      "title": "Providers",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "collapsed": false
+    },
+
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Provider latency (p95)",
+      "description": "p95 upstream call latency per provider. Cache hits are absent by construction: they never reach a provider, which is what the hit-rate panel is measuring.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, provider) (rate(gateway_provider_duration_seconds_bucket{provider=~\"$provider\"}[$__rate_interval])))",
+          "legendFormat": "{{provider}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "pointSize": 8,
+            "spanNulls": false,
+            "lineInterpolation": "smooth"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "openai" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "groq" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#008300" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "gemini" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#d55181" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Provider attempts by outcome",
+      "description": "Attempts per provider split by result. circuit_open entries are calls the breaker skipped entirely — the failover story made visible.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(gateway_provider_attempts_total{provider=~\"$provider\"}[$__rate_interval]))",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "stacking": { "mode": "normal", "group": "A" },
+            "barAlignment": 0
+          },
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "success" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#008300" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "circuit_open" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#c98500" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "unavailable" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#eb6834" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "rate_limit" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#d55181" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+
+    {
+      "id": 10,
+      "type": "state-timeline",
+      "title": "Circuit breaker state",
+      "description": "Per-provider circuit state, shared across replicas through Redis. An open circuit means the gateway stopped calling that provider and is failing over instead.",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gateway_breaker_state{provider=~\"$provider\"}",
+          "legendFormat": "{{provider}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 0, "fillOpacity": 90 },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "closed", "color": "#008300", "index": 0 },
+                "1": { "text": "half-open", "color": "#c98500", "index": 1 },
+                "2": { "text": "open", "color": "#eb6834", "index": 2 }
+              }
+            }
+          ],
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "#008300", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "auto",
+        "mergeValues": true,
+        "alignValue": "left",
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single" }
+      }
+    },
+
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Spend vs. avoided spend",
+      "description": "Cumulative USD actually paid to providers, against USD avoided by cache hits. Both are on one axis and in the same unit, so the comparison is honest.",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum(gateway_cost_usd_total)", "legendFormat": "spent" },
+        { "refId": "B", "expr": "sum(gateway_saved_usd_total)", "legendFormat": "saved by cache" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "lineInterpolation": "smooth"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "spent" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#eb6834" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "saved by cache" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "#008300" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    }
+  ]
+}

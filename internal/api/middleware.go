@@ -90,21 +90,33 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 
+		dur := time.Since(start)
+		cacheStatus := ""
+		if cs, ok := r.Context().Value(ctxKeyCacheStatus).(*string); ok {
+			cacheStatus = *cs
+		}
+
 		attrs := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.status,
 			"bytes", rec.written,
-			"duration_ms", time.Since(start).Milliseconds(),
+			"duration_ms", dur.Milliseconds(),
 			"request_id", RequestIDFrom(r.Context()),
 		}
 		if t := TenantFrom(r.Context()); t != nil {
 			attrs = append(attrs, "tenant", t.ID)
 		}
-		if cs, ok := r.Context().Value(ctxKeyCacheStatus).(*string); ok && *cs != "" {
-			attrs = append(attrs, "cache", *cs)
+		if cacheStatus != "" {
+			attrs = append(attrs, "cache", cacheStatus)
 		}
 		s.log.Info("request", attrs...)
+
+		if s.deps.Metrics != nil {
+			// Label on the route pattern, never the raw path: a per-path label
+			// would be unbounded cardinality if any route ever carries an ID.
+			s.deps.Metrics.RecordRequest(routePattern(r), rec.status, cacheStatus, dur)
+		}
 	})
 }
 
@@ -190,4 +202,14 @@ func (s *Server) withRateLimit(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// routePattern returns the matched route pattern for metric labels. Falling back
+// to a constant rather than the raw path keeps an unmatched request (a 404 probe
+// from a scanner) from minting a new label series per URL.
+func routePattern(r *http.Request) string {
+	if p := r.Pattern; p != "" {
+		return p
+	}
+	return "unmatched"
 }

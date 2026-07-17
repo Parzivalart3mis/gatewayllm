@@ -1,0 +1,15 @@
+# Prometheus scrape config for the GatewayLLM stack.
+global:
+  # 15s balances dashboard freshness against TSDB growth on a small VPS.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: gatewayllm
+    # The gateway serves metrics on its own port, separate from the API.
+    static_configs:
+      - targets: ["gateway:9090"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
