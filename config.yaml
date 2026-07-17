@@ -4,7 +4,9 @@
 # this file is safe to commit. Copy .env.example to .env and put keys there.
 
 server:
-  addr: ":8080"
+  # $PORT is injected by Cloud Run (and most PaaS hosts); it falls back to 8080
+  # for local runs and docker-compose.
+  addr: ":${PORT:-8080}"
   read_timeout: 30s
   # Must exceed the longest expected completion: a short value truncates streams.
   write_timeout: 10m
@@ -117,8 +119,10 @@ cache:
     ttl: 24h
     # A cached entry may differ from the request's temperature by at most this.
     max_temp_delta: 0.05
-    # Must match the embedder's output. all-MiniLM-L6-v2 emits 384.
-    vector_size: 384
+    # Must match the embedder's output. all-MiniLM-L6-v2 (sidecar) emits 384;
+    # OpenAI text-embedding-3-small (api) emits 1536. Env-driven so the same
+    # config serves both without an edit.
+    vector_size: ${VECTOR_SIZE:-384}
 
 # --- embedder --------------------------------------------------------------
 # kind: sidecar (local Python, no per-token cost, nothing leaves the host)
@@ -168,6 +172,8 @@ rate_limit:
 stores:
   redis_url: ${REDIS_URL:-redis://localhost:6379/0}
   qdrant_url: ${QDRANT_URL:-http://localhost:6333}
+  # Empty for local Qdrant; required for managed Qdrant (Qdrant Cloud).
+  qdrant_api_key: ${QDRANT_API_KEY:-}
   postgres_url: ${POSTGRES_URL:-postgres://gateway:gateway@localhost:5432/gatewayllm?sslmode=disable}
 
 # --- metering --------------------------------------------------------------
@@ -187,6 +193,10 @@ obs:
   otlp_endpoint: ${OTLP_ENDPOINT:-}
   sample_ratio: 1.0
   metrics_path: /metrics
+  # ":9090" serves metrics on a dedicated port (compose/VPS). Set to "inline"
+  # to mount /metrics on the main API port instead — required on single-port
+  # hosts like Cloud Run.
+  metrics_addr: ${METRICS_ADDR:-:9090}
   log_level: ${LOG_LEVEL:-info}
 
 # --- pricing ---------------------------------------------------------------

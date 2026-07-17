@@ -141,6 +141,20 @@ make build
 Every store is optional. With `cache`, `rate_limit`, and `meter` disabled, the
 gateway runs as a pure proxy with no backing services at all.
 
+### Deploying to the cloud
+
+The container runs on any container host. For **Google Cloud Run** — the target
+the spec names — see [deploy/cloudrun/README.md](deploy/cloudrun/README.md): the
+same image, with managed stores (Upstash Redis, Qdrant Cloud, Neon Postgres) and
+hosted embeddings swapped in via environment variables. `config.yaml` is fully
+env-driven — `$PORT`, `METRICS_ADDR=inline` for single-port routing, store URLs,
+and the embedder mode all come from the environment — so one image serves both
+compose and Cloud Run with no code change.
+
+A serverless-function platform (Vercel, Lambda) is a poor fit: the async meter
+and background cache writes rely on the process staying alive after the response
+returns, which those platforms don't guarantee.
+
 ---
 
 ## Endpoints

@@ -26,6 +26,12 @@ RUN apk add --no-cache ca-certificates tzdata && \
 
 COPY --from=build /out/gateway /usr/local/bin/gateway
 
+# Bake a default config so hosts without a writable volume (Cloud Run, source
+# deploys) work out of the box. It is fully env-driven — every store URL, key,
+# port, and mode comes from the environment — so one image serves every target.
+# docker-compose mounts its own copy over this at /etc/gatewayllm/config.yaml.
+COPY config.yaml /etc/gatewayllm/config.yaml
+
 USER gateway
 WORKDIR /home/gateway
 

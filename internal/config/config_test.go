@@ -100,6 +100,73 @@ router:
 	}
 }
 
+// TestLoad_CloudRunShape asserts the two settings a Cloud Run deploy depends on:
+// the listener honors the injected $PORT, and metrics can be moved onto the main
+// port. Both are single-port-host requirements, so a regression here would make
+// the service unreachable or unscrapeable in the cloud.
+func TestLoad_CloudRunShape(t *testing.T) {
+	t.Setenv("PORT", "9987")
+
+	cfg, err := Load(write(t, `
+server:
+  addr: ":${PORT:-8080}"
+providers:
+  - name: p1
+    kind: mock
+    models: ["m1"]
+router:
+  aliases:
+    a:
+      targets:
+        - provider: p1
+          model: m1
+obs:
+  metrics_addr: inline
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.Addr != ":9987" {
+		t.Errorf("addr = %q, want :9987 interpolated from $PORT", cfg.Server.Addr)
+	}
+	if !cfg.Obs.MetricsInline() {
+		t.Errorf("MetricsInline() = false, want true for metrics_addr: inline")
+	}
+}
+
+// TestLoad_PortDefault asserts the fallback when $PORT is unset (local runs).
+func TestLoad_PortDefault(t *testing.T) {
+	os.Unsetenv("PORT")
+
+	cfg, err := Load(write(t, `
+server:
+  addr: ":${PORT:-8080}"
+providers:
+  - name: p1
+    kind: mock
+    models: ["m1"]
+router:
+  aliases:
+    a:
+      targets:
+        - provider: p1
+          model: m1
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.Addr != ":8080" {
+		t.Errorf("addr = %q, want the :8080 default when $PORT is unset", cfg.Server.Addr)
+	}
+	// Default metrics stay on their own port unless explicitly inlined.
+	if cfg.Obs.MetricsInline() {
+		t.Error("metrics must default to a dedicated port, not inline")
+	}
+	if cfg.Obs.MetricsAddr != ":9090" {
+		t.Errorf("metrics_addr = %q, want the :9090 default", cfg.Obs.MetricsAddr)
+	}
+}
+
 // TestValidate_Errors covers the misconfigurations that would otherwise surface
 // as confusing runtime failures under production traffic.
 func TestValidate_Errors(t *testing.T) {

@@ -74,9 +74,12 @@ func run() error {
 	}
 	defer app.close(log)
 
-	// Metrics listen on their own port so the scrape endpoint is not exposed on
-	// whatever the API port is published as.
-	go app.serveMetrics(ctx, cfg, log)
+	// Metrics run on their own port by default so the scrape endpoint is not
+	// exposed on the public API port. On single-port hosts (Cloud Run) they are
+	// mounted on the main server instead, and this dedicated listener is skipped.
+	if !cfg.Obs.MetricsInline() {
+		go app.serveMetrics(ctx, cfg, log)
+	}
 
 	return app.server.ListenAndServe(ctx)
 }
@@ -197,7 +200,7 @@ func build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*applicat
 			if err != nil {
 				return nil, err
 			}
-			qc := store.NewQdrant(cfg.Stores.QdrantURL, "", 3*time.Second)
+			qc := store.NewQdrant(cfg.Stores.QdrantURL, cfg.Stores.QdrantAPIKey, 3*time.Second)
 			semantic = cache.NewSemanticTier(qc, cfg.Cache.Semantic)
 
 			// Fail startup on a dimension mismatch rather than discovering it as
@@ -273,16 +276,25 @@ func build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*applicat
 		}
 	}
 
+	// On single-port hosts, hand the scrape handler to the API server so it is
+	// reachable on the one published port; otherwise it runs on its own listener.
+	var metricsHandler http.Handler
+	if cfg.Obs.MetricsInline() {
+		metricsHandler = promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+		log.Info("metrics served inline on the API port", "path", cfg.Obs.MetricsPath)
+	}
+
 	app.server = api.NewServer(api.Deps{
-		Config:  cfg,
-		Router:  rt,
-		Exec:    exec,
-		Auth:    auth,
-		Limit:   limiter,
-		Cache:   c,
-		Meter:   m,
-		Metrics: metrics,
-		Logger:  log,
+		Config:         cfg,
+		Router:         rt,
+		Exec:           exec,
+		Auth:           auth,
+		Limit:          limiter,
+		Cache:          c,
+		Meter:          m,
+		Metrics:        metrics,
+		MetricsHandler: metricsHandler,
+		Logger:         log,
 	})
 	return app, nil
 }
@@ -293,7 +305,7 @@ func (a *application) serveMetrics(ctx context.Context, cfg *config.Config, log 
 	mux.Handle(cfg.Obs.MetricsPath, promhttp.HandlerFor(a.reg, promhttp.HandlerOpts{}))
 
 	srv := &http.Server{
-		Addr:              ":9090",
+		Addr:              cfg.Obs.MetricsAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}

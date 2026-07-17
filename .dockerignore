@@ -1,0 +1,7 @@
+.git
+.env
+.env.*
+deploy/cloudrun/.env.cloud
+bin/
+*.log
+coverage.out

@@ -32,7 +32,11 @@ type Deps struct {
 	Cache   *cache.Cache
 	Meter   *meter.Meter
 	Metrics Metrics
-	Logger  *slog.Logger
+	// MetricsHandler, when set, is mounted at Obs.MetricsPath on the main API
+	// server. Used on single-port hosts (Cloud Run) where a dedicated metrics
+	// listener is unreachable; left nil when metrics run on their own port.
+	MetricsHandler http.Handler
+	Logger         *slog.Logger
 }
 
 // Server serves the OpenAI-compatible API.
@@ -70,6 +74,13 @@ func (s *Server) routes() {
 	// scrapers can reach it without holding a tenant credential.
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
+
+	// Inline metrics for single-port hosts. Unauthenticated like the other
+	// operational routes: a Cloud Run service is expected to gate scrape access
+	// at the platform (IAM) rather than in-process.
+	if s.deps.MetricsHandler != nil {
+		s.mux.Handle("GET "+s.deps.Config.Obs.MetricsPath, s.deps.MetricsHandler)
+	}
 }
 
 // Handler returns the root handler with global middleware applied.

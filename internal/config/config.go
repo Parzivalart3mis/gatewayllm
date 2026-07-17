@@ -149,9 +149,12 @@ type RateLimit struct {
 
 // Stores holds connection settings for the three backing stores.
 type Stores struct {
-	RedisURL    string `yaml:"redis_url"`
-	QdrantURL   string `yaml:"qdrant_url"`
-	PostgresURL string `yaml:"postgres_url"`
+	RedisURL string `yaml:"redis_url"`
+	// QdrantURL is the base URL. Local Qdrant needs no auth; managed Qdrant
+	// (Qdrant Cloud) requires an API key alongside it.
+	QdrantURL    string `yaml:"qdrant_url"`
+	QdrantAPIKey string `yaml:"qdrant_api_key"`
+	PostgresURL  string `yaml:"postgres_url"`
 }
 
 // Meter configures the async usage/cost writer.
@@ -173,8 +176,18 @@ type Obs struct {
 	OTLPEndpoint string  `yaml:"otlp_endpoint"`
 	SampleRatio  float64 `yaml:"sample_ratio"`
 	MetricsPath  string  `yaml:"metrics_path"`
-	LogLevel     string  `yaml:"log_level"`
+	// MetricsAddr is the listener for the Prometheus endpoint. The default
+	// (:9090) serves metrics on a second port, which keeps them off the public
+	// API port for the compose/VPS deployment. The sentinel "inline" instead
+	// mounts /metrics on the main API server — required on single-port hosts
+	// like Cloud Run, which route to exactly one port.
+	MetricsAddr string `yaml:"metrics_addr"`
+	LogLevel    string `yaml:"log_level"`
 }
+
+// MetricsInline reports whether metrics should be served on the main API mux
+// rather than a dedicated listener.
+func (o Obs) MetricsInline() bool { return o.MetricsAddr == "inline" }
 
 // Price is the per-million-token cost for one model, used by the meter.
 type Price struct {
@@ -277,6 +290,7 @@ func (c *Config) applyDefaults() {
 
 	setIfZero(&c.Obs.ServiceName, "gatewayllm")
 	setIfZero(&c.Obs.MetricsPath, "/metrics")
+	setIfZero(&c.Obs.MetricsAddr, ":9090")
 	setIfZero(&c.Obs.LogLevel, "info")
 	if c.Obs.SampleRatio == 0 {
 		c.Obs.SampleRatio = 1.0
