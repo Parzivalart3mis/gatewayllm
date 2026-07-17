@@ -37,8 +37,8 @@ func TestExactKey_Distinguishes(t *testing.T) {
 	baseKey := ExactKey("tenant-1", base)
 
 	cases := []struct {
-		name string
-		req  *provider.ChatRequest
+		name   string
+		req    *provider.ChatRequest
 		tenant string
 	}{
 		{"different prompt", req("gpt-4o", f(0.2), i(100), user("goodbye")), "tenant-1"},

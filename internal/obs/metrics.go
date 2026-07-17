@@ -31,8 +31,8 @@ type Metrics struct {
 	ProviderDuration *prometheus.HistogramVec
 	BreakerState     *prometheus.GaugeVec
 
-	TokensTotal  *prometheus.CounterVec
-	CostUSDTotal *prometheus.CounterVec
+	TokensTotal   *prometheus.CounterVec
+	CostUSDTotal  *prometheus.CounterVec
 	SavedUSDTotal *prometheus.CounterVec
 
 	MeterDropped prometheus.Counter
