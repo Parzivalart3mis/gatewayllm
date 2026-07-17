@@ -187,17 +187,20 @@ func (rc *requestContext) serveUnary(w http.ResponseWriter, r *http.Request, tar
 	// The response reports the alias the client requested, not the upstream
 	// model that served it: which backend answered is the gateway's business,
 	// and leaking it would make failover a visible behaviour change.
-	upstreamModel := resp.Model
 	resp.Model = rc.req.Model
 
 	w.Header().Set("X-Cache", string(lookup.Status))
 	w.Header().Set("X-Provider", target.Provider.Name())
 	writeJSON(w, http.StatusOK, resp)
 
+	// Attribute usage to the router's resolved model, not to whatever the
+	// provider echoed back. Providers routinely return a more specific ID than
+	// the one they were called with (gpt-4o -> gpt-4o-2024-08-06), which would
+	// miss the price table and silently book the request as free.
 	if cacheable {
-		rc.storeAsync(target, upstreamModel, resp.Text(), resp.Usage, lookup.Vector)
+		rc.storeAsync(target, target.Model, resp.Text(), resp.Usage, lookup.Vector)
 	}
-	rc.meterSuccess(target, upstreamModel, resp.Usage, lookup.Status)
+	rc.meterSuccess(target, target.Model, resp.Usage, lookup.Status)
 }
 
 // serveStream handles a streaming completion, forwarding chunks as they arrive
