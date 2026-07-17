@@ -97,6 +97,7 @@ func (t *SemanticTier) Upsert(ctx context.Context, tenantID string, req *provide
 		Payload: map[string]any{
 			"tenant":            tenantID,
 			"model":             req.Model,
+			"upstream_model":    e.UpstreamModel,
 			"provider":          e.Provider,
 			"completion":        e.Completion,
 			"prompt":            prompt,
@@ -119,6 +120,7 @@ func entryFromPayload(p map[string]any) (*Entry, error) {
 	e := &Entry{
 		Completion:       completion,
 		Model:            str(p["model"]),
+		UpstreamModel:    str(p["upstream_model"]),
 		Provider:         str(p["provider"]),
 		Prompt:           str(p["prompt"]),
 		Temp:             num(p["temperature"]),

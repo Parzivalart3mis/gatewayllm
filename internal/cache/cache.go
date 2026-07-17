@@ -34,11 +34,19 @@ const (
 // parameters are stored, not just the text, because serving an entry requires
 // proving it was generated under compatible settings.
 type Entry struct {
-	Completion string  `json:"completion"`
-	Model      string  `json:"model"`
-	Provider   string  `json:"provider"`
-	Temp       float64 `json:"temperature"`
-	MaxTokens  int     `json:"max_tokens"`
+	Completion string `json:"completion"`
+	// Model is the client-facing alias this entry answers for. The
+	// compatibility guard and the Qdrant tenant/model filter both match on it,
+	// so it must be the alias, not the upstream model.
+	Model string `json:"model"`
+	// UpstreamModel is the provider's actual model, retained so a cache hit can
+	// price the spend it avoided. Pricing keys on the upstream model, so using
+	// the alias here would miss the price table and book every hit's savings as
+	// zero.
+	UpstreamModel string  `json:"upstream_model"`
+	Provider      string  `json:"provider"`
+	Temp          float64 `json:"temperature"`
+	MaxTokens     int     `json:"max_tokens"`
 	// PromptTokens and CompletionTokens are the original call's usage, replayed
 	// so a cache hit reports the tokens it saved rather than zeros.
 	PromptTokens     int   `json:"prompt_tokens"`

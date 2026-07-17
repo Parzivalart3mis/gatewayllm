@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,10 +25,35 @@ const testKey = "glm_test_key"
 // harness is a fully wired gateway backed by miniredis and a mock provider, so
 // the whole request path is exercised with no network and no containers.
 type harness struct {
-	server *httptest.Server
-	mock   *provider.Mock
-	redis  *miniredis.Miniredis
-	cfg    *config.Config
+	server  *httptest.Server
+	mock    *provider.Mock
+	redis   *miniredis.Miniredis
+	cfg     *config.Config
+	metrics *metricsSpy
+}
+
+// metricsSpy records usage events so tests can assert on cost and savings.
+type metricsSpy struct {
+	mu     sync.Mutex
+	spent  float64
+	saved  float64
+	usages int
+}
+
+func (m *metricsSpy) RecordRequest(string, int, string, time.Duration) {}
+
+func (m *metricsSpy) RecordUsage(_, _ string, _, _ int, costUSD, savedUSD float64, _ string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.spent += costUSD
+	m.saved += savedUSD
+	m.usages++
+}
+
+func (m *metricsSpy) totals() (spent, saved float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.spent, m.saved
 }
 
 func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
@@ -83,19 +109,21 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 		limiter = NewRedisLimiter(rdb, cfg.RateLimit.DefaultRPM, cfg.RateLimit.Burst)
 	}
 
+	spy := &metricsSpy{}
 	srv := NewServer(Deps{
-		Config: cfg,
-		Router: rt,
-		Exec:   exec,
-		Auth:   NewStaticAuthenticator(map[string]*Tenant{testKey: {ID: "t1", Name: "test", KeyID: "k1"}}),
-		Limit:  limiter,
-		Cache:  c,
+		Config:  cfg,
+		Router:  rt,
+		Exec:    exec,
+		Auth:    NewStaticAuthenticator(map[string]*Tenant{testKey: {ID: "t1", Name: "test", KeyID: "k1"}}),
+		Limit:   limiter,
+		Cache:   c,
+		Metrics: spy,
 	})
 
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
-	return &harness{server: ts, mock: mock, redis: mr, cfg: cfg}
+	return &harness{server: ts, mock: mock, redis: mr, cfg: cfg, metrics: spy}
 }
 
 // post issues a chat request with the given body.
@@ -192,6 +220,31 @@ func TestExactCache_HitSkipsProvider(t *testing.T) {
 	if secondOut.Usage.CompletionTokens != firstOut.Usage.CompletionTokens {
 		t.Errorf("cached usage %d != original %d; a hit must replay the original token counts",
 			secondOut.Usage.CompletionTokens, firstOut.Usage.CompletionTokens)
+	}
+}
+
+// TestExactCache_HitBooksSavings is a regression guard: a cache hit must price
+// the spend it avoided using the upstream model, not the alias. Keying pricing
+// on the alias misses the price table and reports zero saved — which would make
+// the headline "cost saved" number permanently zero.
+func TestExactCache_HitBooksSavings(t *testing.T) {
+	h := newHarness(t, nil)
+	body := chatBody("save me money", 0.0)
+
+	h.post(t, body).Body.Close()
+	waitFor(t, func() bool { return h.mock.Calls() == 1 && len(h.redis.Keys()) > 0 })
+
+	second := h.post(t, body)
+	if got := second.Header.Get("X-Cache"); got != string(cache.StatusExactHit) {
+		t.Fatalf("X-Cache = %q, want exact_hit", got)
+	}
+	second.Body.Close()
+
+	_, saved := h.metrics.totals()
+	// The mock reply is priced via the "mock-model" entry ($1/$2 per M tokens);
+	// the exact figure does not matter, only that a hit books a positive saving.
+	if saved <= 0 {
+		t.Errorf("saved = %v, want > 0: a cache hit must price the avoided spend on the upstream model", saved)
 	}
 }
 

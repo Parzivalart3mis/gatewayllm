@@ -10,6 +10,7 @@ import (
 
 	"github.com/yash/gatewayllm/internal/cache"
 	"github.com/yash/gatewayllm/internal/meter"
+	"github.com/yash/gatewayllm/internal/obs"
 	"github.com/yash/gatewayllm/internal/provider"
 	"github.com/yash/gatewayllm/internal/router"
 )
@@ -32,7 +33,17 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenant := TenantFrom(r.Context())
-	ctx := r.Context()
+
+	// Root span for the request. Every stage below opens a child, producing the
+	// auth → cache-lookup → route → provider-call → cache-write waterfall; a
+	// cache hit returns before the provider span opens, so the hit visibly
+	// skips it in the trace.
+	ctx, endSpan := obs.StartSpan(r.Context(), "chat.completions",
+		obs.AttrTenant.String(tenant.ID),
+		obs.AttrModelAlias.String(req.Model),
+		obs.AttrStreamed.Bool(req.Stream),
+	)
+	defer endSpan()
 
 	// Expose the cache outcome to the access log, which runs after this handler.
 	cacheStatus := new(string)
@@ -56,7 +67,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		var reason cache.BypassReason
 		cacheable, reason = s.deps.Cache.Cacheable(&req, noCacheRequested(r))
 		if cacheable {
-			lookup = s.deps.Cache.Lookup(ctx, tenant.ID, &req)
+			lookupCtx, endLookup := obs.StartSpan(ctx, "cache.lookup")
+			lookup = s.deps.Cache.Lookup(lookupCtx, tenant.ID, &req)
+			endLookup()
 		} else {
 			lookup = cache.Result{Status: cache.StatusBypass}
 			s.log.Debug("cache bypassed", "reason", reason, "request_id", rc.reqID)
@@ -65,6 +78,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		lookup = cache.Result{Status: cache.StatusBypass}
 	}
 	*cacheStatus = string(lookup.Status)
+	obs.SpanFrom(ctx).SetAttributes(obs.AttrCacheStatus.String(string(lookup.Status)))
 
 	if lookup.Hit() {
 		rc.serveFromCache(w, lookup)
@@ -97,7 +111,6 @@ type requestContext struct {
 	reqID    string
 	status   *string
 	streamed bool
-	attempts int
 }
 
 // noCacheRequested reports whether the client opted out of the cache. Both the
@@ -177,7 +190,17 @@ func (rc *requestContext) replayAsStream(w http.ResponseWriter, resp *provider.C
 // serveUnary handles a non-streaming completion.
 func (rc *requestContext) serveUnary(w http.ResponseWriter, r *http.Request, targets []router.Target, lookup cache.Result, cacheable bool) {
 	s := rc.server
-	resp, target, err := s.deps.Exec.Chat(r.Context(), targets, rc.req)
+	callCtx, endCall := obs.StartSpan(r.Context(), "provider.call")
+	resp, target, err := s.deps.Exec.Chat(callCtx, targets, rc.req)
+	endCall()
+	if err == nil {
+		obs.SpanFrom(r.Context()).SetAttributes(
+			obs.AttrProvider.String(target.Provider.Name()),
+			obs.AttrModel.String(target.Model),
+			obs.AttrTokensIn.Int(resp.Usage.PromptTokens),
+			obs.AttrTokensOut.Int(resp.Usage.CompletionTokens),
+		)
+	}
 	if err != nil {
 		writeProviderError(w, err)
 		rc.meterProviderFailure(err)
@@ -224,7 +247,9 @@ func (rc *requestContext) serveStream(w http.ResponseWriter, r *http.Request, ta
 		wrote bool
 	)
 
-	target, err := s.deps.Exec.ChatStream(r.Context(), targets, rc.req, func(c *provider.ChatChunk) error {
+	callCtx, endCall := obs.StartSpan(r.Context(), "provider.call")
+	defer endCall()
+	target, err := s.deps.Exec.ChatStream(callCtx, targets, rc.req, func(c *provider.ChatChunk) error {
 		c.Model = rc.req.Model // report the alias, as the unary path does
 		if c.Usage != nil {
 			usage = *c.Usage
@@ -269,7 +294,8 @@ func (rc *requestContext) storeAsync(target router.Target, upstreamModel, text s
 	}
 	entry := &cache.Entry{
 		Completion:       text,
-		Model:            rc.req.Model,
+		Model:            rc.req.Model,  // the alias, for the compatibility guard
+		UpstreamModel:    upstreamModel, // the real model, for pricing a future hit
 		Provider:         target.Provider.Name(),
 		Temp:             rc.req.Temp(),
 		MaxTokens:        rc.req.MaxTok(),
@@ -325,14 +351,19 @@ func (rc *requestContext) meterSuccess(target router.Target, upstreamModel strin
 		Streamed:         rc.streamed,
 		StatusCode:       http.StatusOK,
 		LatencyMS:        time.Since(rc.start).Milliseconds(),
-		Attempts:         rc.attempts,
+		// A served response took at least one attempt. Per-request retry and
+		// failover counts are carried in aggregate by gateway_provider_attempts_total
+		// rather than duplicated per row.
+		Attempts: 1,
 	})
 }
 
 // meterCacheHit records a hit. Cost is zero and the money not spent is recorded
 // as savings, which is what makes the "cost saved" panel possible.
 func (rc *requestContext) meterCacheHit(res cache.Result, e *cache.Entry) {
-	saved, _ := rc.server.pricing().Cost(e.Provider, e.Model, e.PromptTokens, e.CompletionTokens)
+	// Price on the upstream model, not the alias e.Model: the price table is
+	// keyed on the real model, so the alias would miss it and report zero saved.
+	saved, _ := rc.server.pricing().Cost(e.Provider, e.UpstreamModel, e.PromptTokens, e.CompletionTokens)
 
 	if mx := rc.server.deps.Metrics; mx != nil {
 		// Cost is zero and the avoided spend is booked as savings: this is the

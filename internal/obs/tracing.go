@@ -80,11 +80,22 @@ const (
 	AttrModel       = attribute.Key("gateway.model")
 	AttrProvider    = attribute.Key("gateway.provider")
 	AttrCacheStatus = attribute.Key("gateway.cache_status")
-	AttrSimilarity  = attribute.Key("gateway.cache_similarity")
-	AttrAttempt     = attribute.Key("gateway.attempt")
-	AttrBreaker     = attribute.Key("gateway.breaker_state")
 	AttrStreamed    = attribute.Key("gateway.streamed")
 	AttrTokensIn    = attribute.Key("gateway.tokens_in")
 	AttrTokensOut   = attribute.Key("gateway.tokens_out")
-	AttrCostUSD     = attribute.Key("gateway.cost_usd")
 )
+
+// StartSpan opens a child span from ctx using the gateway's tracer. When tracing
+// is disabled (no OTLP endpoint) the global provider is a no-op, so this costs a
+// few nil checks and nothing more. Callers must call the returned end func.
+func StartSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, func()) {
+	ctx, span := Tracer().Start(ctx, name)
+	if len(attrs) > 0 {
+		span.SetAttributes(attrs...)
+	}
+	return ctx, func() { span.End() }
+}
+
+// SpanFrom returns the span recording in ctx, for adding attributes to the span
+// an outer layer already opened.
+func SpanFrom(ctx context.Context) trace.Span { return trace.SpanFromContext(ctx) }
