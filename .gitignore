@@ -1,0 +1,4 @@
+/gateway
+/bin/
+*.log
+.env
