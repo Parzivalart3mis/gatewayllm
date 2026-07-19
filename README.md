@@ -314,8 +314,38 @@ Built in the spec's value-first order: passthrough proxy → multi-provider
 failover → exact cache + rate limiting → semantic cache → metering and
 observability. All five stages are complete.
 
-The compose stack, the Grafana dashboard, and the sidecar image are configured
-but have not been run end-to-end on real provider keys — the Go test suite,
-config validation, and compose/Python syntax all pass, but the numbers in the
-`glmctl usage` sample above are illustrative, not measured. Point it at real keys
-and the dashboard fills in.
+### Measured
+
+Live run (2026-07-19): the gateway against **real Groq traffic**
+(`llama-3.1-8b-instant`) with the Redis exact tier, replaying a 30-prompt corpus
+for 5 rounds — 180 requests total. Reproduce with the bundled tool:
+
+```bash
+go run ./cmd/glmbench -url http://localhost:8080 -key <key> -prompts bench/prompts.txt
+```
+
+| X-Cache | count | p50 | p95 |
+|---|---|---|---|
+| `miss` (real provider call) | 30 | 128 ms | 293 ms |
+| `exact_hit` | 150 | **0.42 ms** | 1 ms |
+
+- **~300× lower p50** on a cache hit than a provider call (0.42 ms vs 128 ms)
+- **83.3% hit rate** on this workload, cutting provider spend **6×**
+  ($0.00015 spent vs $0.00075 avoided, from `gateway_cost_usd_total` /
+  `gateway_saved_usd_total`)
+- **15,000+ req/s** cache-hit throughput at concurrency 8 (loopback)
+
+Caveats, stated plainly: the hit rate is a property of this replay workload
+(every prompt repeated 5×), not a production estimate — real-traffic hit rates
+depend entirely on prompt repetition. Latencies include this machine's network
+path to Groq. Numbers came from a local binary + local Redis, not the full
+compose stack.
+
+### Not yet measured
+
+The **semantic tier** (Qdrant + embedder) and the Grafana dashboard on live
+traffic — both need the full compose stack or a cloud deploy. The semantic
+tier's threshold tuning and false-hit rate are exactly the numbers a paraphrase
+corpus (e.g. Quora Question Pairs) through `glmbench` would produce; the
+instrumentation (`gateway_cache_similarity`, `gateway_cache_false_hits_total`)
+is already wired.

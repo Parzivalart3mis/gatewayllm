@@ -1,0 +1,32 @@
+# glmbench corpus: 30 short factual prompts. Short on purpose — the benchmark
+# measures gateway behaviour, not model verbosity.
+What is the capital of Japan?
+How many bones are in the adult human body?
+What year did the Berlin Wall fall?
+Name the largest planet in the solar system.
+What language has the most native speakers?
+What is the boiling point of water at sea level in Celsius?
+Who wrote the novel 1984?
+What is the chemical symbol for gold?
+How long does light take to travel from the Sun to Earth?
+What is the smallest prime number?
+Which ocean is the deepest?
+What does HTTP stand for?
+Name the longest river in Africa.
+What is the speed of sound in air at room temperature?
+Who painted the Mona Lisa?
+What is the square root of 144?
+Which country invented paper?
+What gas do plants absorb from the atmosphere?
+How many continents are there?
+What is the currency of Switzerland?
+Name the tallest mountain on Earth.
+What does CPU stand for?
+Which planet is known as the red planet?
+What is the freezing point of water in Fahrenheit?
+Who developed the theory of general relativity?
+What is the largest mammal?
+Which element has atomic number 1?
+What year did World War II end?
+Name the author of Romeo and Juliet.
+What is the binary representation of the number 5?

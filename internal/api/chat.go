@@ -367,8 +367,10 @@ func (rc *requestContext) meterCacheHit(res cache.Result, e *cache.Entry) {
 
 	if mx := rc.server.deps.Metrics; mx != nil {
 		// Cost is zero and the avoided spend is booked as savings: this is the
-		// pair of numbers the "cost saved" panel is built from.
-		mx.RecordUsage(e.Provider, e.Model, e.PromptTokens, e.CompletionTokens, 0, saved, string(res.Status))
+		// pair of numbers the "cost saved" panel is built from. Labeled with the
+		// upstream model, matching cost_usd_total, so per-model spend and
+		// savings group together on the dashboard.
+		mx.RecordUsage(e.Provider, e.UpstreamModel, e.PromptTokens, e.CompletionTokens, 0, saved, string(res.Status))
 	}
 
 	m := rc.server.deps.Meter
