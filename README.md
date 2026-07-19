@@ -227,8 +227,14 @@ spend-vs-avoided-spend.
 
 ```bash
 go run ./cmd/glmctl usage -since 24h
-# TENANT  REQUESTS  TOKENS  SPENT    SAVED    HIT RATE
-# demo    1284      412903  $0.8241  $0.3117  38.1%
+```
+
+Output shape (illustrative values — measured numbers live in
+[Status](#status)):
+
+```
+TENANT  REQUESTS  TOKENS  SPENT    SAVED    HIT RATE
+demo    1284      412903  $0.8241  $0.3117  38.1%
 ```
 
 ---
