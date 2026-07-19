@@ -37,8 +37,20 @@ require() {
   fi
 }
 require REDIS_URL
-require QDRANT_URL
 require POSTGRES_URL
+
+# Qdrant and an embeddings backend are only needed when the semantic tier is on.
+# With SEMANTIC_ENABLED=false the gateway ships the exact-match tier alone and
+# needs neither, so demanding them here would block a valid deploy.
+if [[ "${SEMANTIC_ENABLED:-true}" != "false" ]]; then
+  require QDRANT_URL
+  if [[ "${EMBED_KIND:-api}" == "api" && -z "${OPENAI_API_KEY:-}" ]]; then
+    echo "error: the semantic tier needs an embeddings key." >&2
+    echo "       Set OPENAI_API_KEY, or set SEMANTIC_ENABLED=false to deploy" >&2
+    echo "       with the exact-match cache only." >&2
+    exit 1
+  fi
+fi
 
 # Build the comma-separated env-var list Cloud Run expects. Only non-empty
 # values are forwarded, so an unset optional key does not overwrite the config
@@ -60,6 +72,7 @@ add EMBED_KIND       "${EMBED_KIND:-api}"
 add EMBEDDER_URL     "${EMBEDDER_URL:-https://api.openai.com/v1}"
 add EMBED_MODEL      "${EMBED_MODEL:-text-embedding-3-small}"
 add VECTOR_SIZE      "${VECTOR_SIZE:-1536}"
+add SEMANTIC_ENABLED "${SEMANTIC_ENABLED:-true}"
 add METRICS_ADDR     "${METRICS_ADDR:-inline}"
 add OTLP_ENDPOINT    "${OTLP_ENDPOINT:-}"
 

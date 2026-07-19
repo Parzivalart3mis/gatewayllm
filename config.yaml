@@ -106,7 +106,11 @@ cache:
   max_temperature: 0.3
 
   semantic:
-    enabled: true
+    # Env-driven so a deploy without an embeddings backend (e.g. Cloud Run with
+    # no OpenAI key, where the sidecar cannot run) can ship the exact tier alone
+    # by setting SEMANTIC_ENABLED=false. Disabling it also drops the Qdrant
+    # dependency entirely.
+    enabled: ${SEMANTIC_ENABLED:-true}
     collection: gatewayllm_semantic
 
     # Minimum cosine similarity for a hit. 0.95 is deliberately conservative:

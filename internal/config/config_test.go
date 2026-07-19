@@ -167,6 +167,41 @@ router:
 	}
 }
 
+// TestLoad_SemanticDisabledDropsQdrant asserts the escape hatch for deploys with
+// no embeddings backend: turning the semantic tier off must also lift the Qdrant
+// requirement, so an exact-cache-only deploy validates without a vector store.
+func TestLoad_SemanticDisabledDropsQdrant(t *testing.T) {
+	t.Setenv("SEMANTIC_ENABLED", "false")
+
+	cfg, err := Load(write(t, `
+providers:
+  - name: p1
+    kind: mock
+    models: ["m1"]
+router:
+  aliases:
+    a:
+      targets:
+        - provider: p1
+          model: m1
+stores:
+  redis_url: redis://localhost:6379
+cache:
+  enabled: true
+  semantic:
+    enabled: ${SEMANTIC_ENABLED:-true}
+`))
+	if err != nil {
+		t.Fatalf("an exact-cache-only config must validate without Qdrant: %v", err)
+	}
+	if cfg.Cache.Semantic.Enabled {
+		t.Error("semantic tier must be off when SEMANTIC_ENABLED=false")
+	}
+	if !cfg.Cache.Enabled {
+		t.Error("the exact tier must remain enabled")
+	}
+}
+
 // TestValidate_Errors covers the misconfigurations that would otherwise surface
 // as confusing runtime failures under production traffic.
 func TestValidate_Errors(t *testing.T) {
