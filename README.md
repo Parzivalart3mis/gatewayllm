@@ -20,6 +20,11 @@ client.chat.completions.create(
 `fast` resolves to Groq, falls back to Gemini, then OpenAI. The caller never
 learns which one answered.
 
+**Measured** (live Groq traffic, 2026-07-19 — [methodology and caveats](#status)):
+exact-tier cache hits served in **0.42 ms p50** vs **128 ms p50** for real
+provider calls; provider spend cut **6×** on a 180-request replay. Semantic-tier
+numbers are pending a full-stack run and are not claimed.
+
 ---
 
 ## Why it's built this way
@@ -229,7 +234,7 @@ spend-vs-avoided-spend.
 go run ./cmd/glmctl usage -since 24h
 ```
 
-Output shape (illustrative values — measured numbers live in
+Example output format (placeholder values — real measurements are in
 [Status](#status)):
 
 ```
@@ -335,10 +340,11 @@ go run ./cmd/glmbench -url http://localhost:8080 -key <key> -prompts bench/promp
 | `miss` (real provider call) | 30 | 128 ms | 293 ms |
 | `exact_hit` | 150 | **0.42 ms** | 1 ms |
 
-- **~300× lower p50** on a cache hit than a provider call (0.42 ms vs 128 ms)
-- **83.3% hit rate** on this workload, cutting provider spend **6×**
-  ($0.00015 spent vs $0.00075 avoided, from `gateway_cost_usd_total` /
-  `gateway_saved_usd_total`)
+- Exact-tier hit p50 of **0.42 ms** vs **128 ms** for a provider call — a
+  ~300× gap
+- Provider spend cut **6×** ($0.00015 spent vs $0.00075 avoided, from
+  `gateway_cost_usd_total` / `gateway_saved_usd_total`) — 150 of the 180
+  requests (83.3%) never reached Groq
 - **15,000+ req/s** cache-hit throughput at concurrency 8 (loopback)
 
 Caveats, stated plainly: the hit rate is a property of this replay workload
